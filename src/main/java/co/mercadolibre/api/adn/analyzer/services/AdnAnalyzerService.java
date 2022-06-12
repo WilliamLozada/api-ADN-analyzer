@@ -3,46 +3,78 @@ package co.mercadolibre.api.adn.analyzer.services;
 import co.mercadolibre.api.adn.analyzer.config.MutantProperties;
 import co.mercadolibre.api.adn.analyzer.config.exception.DNAInvalidExceptionBuilder;
 import co.mercadolibre.api.adn.analyzer.config.exception.DNALengthExceptionBuilder;
-import co.mercadolibre.api.adn.analyzer.domain.dto.Constant;
-import co.mercadolibre.api.adn.analyzer.port.in.AdnAnalyzerUseCase;
+import co.mercadolibre.api.adn.analyzer.domain.Constant;
+import co.mercadolibre.api.adn.analyzer.domain.dto.DnaAnalyzer;
+import co.mercadolibre.api.adn.analyzer.domain.enums.IsMutant;
+import co.mercadolibre.api.adn.analyzer.domain.response.ResponseStats;
+import co.mercadolibre.api.adn.analyzer.port.in.DnaAnalyzerUseCase;
+import co.mercadolibre.api.adn.analyzer.port.out.DnaAnalyzerPort;
+import java.util.Arrays;
+import java.util.UUID;
 import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.math.NumberUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class AdnAnalyzerService implements AdnAnalyzerUseCase {
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(AdnAnalyzerService.class);
+public class AdnAnalyzerService implements DnaAnalyzerUseCase {
 
   private final MutantProperties mutantProperties;
   private final ValidatorSequenceService validatorSequenceService;
+  private final DnaAnalyzerPort dnaAnalyzerPort;
 
   @Override
   public boolean isMutant(IsMutantCommand isMutantCommand) {
 
     int sequencesFound = NumberUtils.INTEGER_ZERO;
     if (isMutantCommand.getDna().length < mutantProperties.getSizeSequenceToMutant()) {
-      LOGGER.error(Constant.ERROR_SIZE_SEQUENCE, mutantProperties.getSizeSequenceToMutant());
+      throw DNALengthExceptionBuilder.builder()
+          .location(this.getClass().getCanonicalName()).exceptionCode("400")
+          .message(String.format(Constant.ERROR_SIZE_SEQUENCE,
+              mutantProperties.getSizeSequenceToMutant()))
+          .build();
     }
     final char[][] matrixDNA = createMatrixDNA(isMutantCommand);
     sequencesFound += validatorSequenceService.horizotal(matrixDNA);
     if (sequencesFound >= mutantProperties.getNumberMatchingToMutant()) {
+      dnaAnalyzerPort.save(DnaAnalyzer.builder().uuid(UUID.randomUUID().toString())
+          .sequence(Arrays.toString(isMutantCommand.getDna())).isMutant(IsMutant.YES).build());
       return true;
     }
     sequencesFound += validatorSequenceService.vertical(matrixDNA);
     if (sequencesFound >= mutantProperties.getNumberMatchingToMutant()) {
+      dnaAnalyzerPort.save(DnaAnalyzer.builder().uuid(UUID.randomUUID().toString())
+          .sequence(Arrays.toString(isMutantCommand.getDna())).isMutant(IsMutant.YES).build());
       return true;
     }
     sequencesFound += validatorSequenceService.diagonalDown(matrixDNA);
     if (sequencesFound >= mutantProperties.getNumberMatchingToMutant()) {
+      dnaAnalyzerPort.save(DnaAnalyzer.builder().uuid(UUID.randomUUID().toString())
+          .sequence(Arrays.toString(isMutantCommand.getDna())).isMutant(IsMutant.YES).build());
       return true;
     }
     sequencesFound += validatorSequenceService.diagonalUpward(matrixDNA);
-    return sequencesFound >= mutantProperties.getNumberMatchingToMutant();
+    if (sequencesFound >= mutantProperties.getNumberMatchingToMutant()) {
+      dnaAnalyzerPort.save(DnaAnalyzer.builder().uuid(UUID.randomUUID().toString())
+          .sequence(Arrays.toString(isMutantCommand.getDna())).isMutant(IsMutant.YES).build());
+      return true;
+    }
+    dnaAnalyzerPort.save(DnaAnalyzer.builder().uuid(UUID.randomUUID().toString())
+        .sequence(Arrays.toString(isMutantCommand.getDna())).isMutant(IsMutant.NO).build());
+    return false;
+  }
+
+  @Override
+  public ResponseStats getStats() {
+    long countMutantDna = dnaAnalyzerPort.getCountMutantDna();
+    long countHumanDna = dnaAnalyzerPort.getCountHumanDna();
+
+    return ResponseStats.builder()
+        .countMutantDna(countMutantDna)
+        .countHumanDna(countHumanDna)
+        .ratio((((double) countMutantDna) / (countHumanDna == 0L ? 1L : countHumanDna)))
+        .build();
   }
 
   private char[][] createMatrixDNA(IsMutantCommand isMutantCommand) {
